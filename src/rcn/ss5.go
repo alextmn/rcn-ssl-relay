@@ -15,15 +15,15 @@ func ss5(con net.Conn) (err error) {
 	remote := con.RemoteAddr()
 	var buf []byte
 
-	read := func(size int, eStr string) (error) {
+	read := func(size int, eStr string) (err error) {
 		buf = make([]byte, size)
-		if _, err := io.ReadFull(con, buf); err != nil {
+		if _, err = io.ReadFull(con, buf); err != nil {
 			log.Printf(eStr + ". %v %v", err, remote)
 		}
 		return
 	}
 
-	write := func(b []byte, eStr string) (error) {
+	write := func(b []byte, eStr string) (err error) {
 		if _, err = io.Copy(con, bytes.NewReader(b)); err != nil {
 			log.Printf(eStr + ". %v", err)
 
@@ -95,7 +95,7 @@ func ss5(con net.Conn) (err error) {
 			"." + strconv.Itoa(int(buf[2])) + "." + strconv.Itoa(int(buf[3]))
 
 	default:
-		err = fmt.Sprintf("ss5 type operation is not supported. value=%v", typeOp)
+		err =errors.New(fmt.Sprintf("ss5 type operation is not supported. value=%v", typeOp))
 		return
 	}
 

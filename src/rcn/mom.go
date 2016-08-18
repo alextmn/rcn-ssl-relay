@@ -33,7 +33,7 @@ func (m *Mom) handle(stomp Stomp) {
 	switch {
 	case stomp.Cmd == "CONNECTED" :
 		s := Stomp{Cmd:"SUBSCRIBE", Header:map[string]string{
-			"destination":"/topic/relay-" + tr.cfg.id,
+			"destination":"/topic/relay-",
 			"ack":"" }}
 		m.send(s)
 	case stomp.Cmd == "MESSAGE" &&  stomp.Body != nil:

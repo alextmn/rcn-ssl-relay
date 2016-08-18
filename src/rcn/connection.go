@@ -6,8 +6,6 @@ import (
 	"log"
 	"crypto/tls"
 	"bytes"
-	"strconv"
-	"encoding/binary"
 )
 
 var emptyBuffer = []byte{0, 0, 0, 0, 0, 0, 0}
