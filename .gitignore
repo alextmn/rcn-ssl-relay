@@ -1,0 +1,11 @@
+build-*
+*.user
+Debug
+Release
+.idea
+target
+*.suo
+*.sdf
+*.opensdf
+*.iml
+*.pem
