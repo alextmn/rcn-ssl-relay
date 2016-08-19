@@ -34,7 +34,7 @@ func NewStomp(str [] byte) Stomp {
 			}
 			name := string(line[:indx])
 			value := string(line[indx + 1:])
-			m[name] = url.QueryEscape(string(value))
+			m[name], _ = url.QueryUnescape(string(value))
 		}
 		return err, m
 	}

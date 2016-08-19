@@ -11,7 +11,7 @@ import (
 	"fmt"
 )
 
-func ss5(con net.Conn) (err error) {
+func ss5(con net.Conn, revoked error) (err error) {
 	remote := con.RemoteAddr()
 	var buf []byte
 
@@ -62,7 +62,24 @@ func ss5(con net.Conn) (err error) {
 	}
 
 	if authType == 0x1e {
-		panic("todo support")
+		certLen := int(binary.BigEndian.Uint32(buf))
+
+		log.Printf("0x1e cert len: %v", certLen)
+		if certLen < 0 || certLen > 32000 {
+			err = errors.New(fmt.Sprintf("0x1E cert incorrect size:%v", certLen))
+			return
+		}
+		if err = read(certLen, "ss5 cert"); err != nil {
+			return
+		}
+		log.Printf("0x1e cert:\n %v", string(buf))
+
+		// TODO:cert check //////////////////////////
+
+		if err = read(4, "0x1e cert st3"); err != nil {
+			return
+		}
+
 	}
 	//check version
 	if buf[0] != 0x5 {
@@ -95,7 +112,7 @@ func ss5(con net.Conn) (err error) {
 			"." + strconv.Itoa(int(buf[2])) + "." + strconv.Itoa(int(buf[3]))
 
 	default:
-		err =errors.New(fmt.Sprintf("ss5 type operation is not supported. value=%v", typeOp))
+		err = errors.New(fmt.Sprintf("ss5 type operation is not supported. value=%v", typeOp))
 		return
 	}
 
@@ -104,14 +121,18 @@ func ss5(con net.Conn) (err error) {
 	}
 	port = int(binary.BigEndian.Uint16(buf))
 
-	if err = write([]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, "ss5 final write failed"); err != nil {
+	if (revoked != nil) {
+		write([]byte("REVOKED"), "")
+		err = errors.New(fmt.Sprintf("REVOKED. %v %v", revoked, remote))
 		return
 	}
 
-	log.Printf("finished: %v:%v", bouceHost, port)
+	if err = write([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0}, "ss5 final write failed"); err != nil {
+		return
+	}
 
-	//read(30, "")
-	//log.Printf("%v", string(buf))
+
+	log.Printf("finished: %v:%v", bouceHost, port)
 
 	return
 }

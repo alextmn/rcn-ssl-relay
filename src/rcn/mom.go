@@ -6,51 +6,66 @@ import (
 	"bufio"
 	"io"
 	"bytes"
+	"time"
 )
 
-type Mom struct {
-	conn net.Conn
-	id   string
-}
+func Mom(conn net.Conn, id   string, tr *StompTransport) (err error) {
 
-func (m*Mom)ServeMom(conn net.Conn, id   string) (err error) {
-	m.conn = conn
-	m.id = id
 	reader := bufio.NewReader(conn)
 
+	tr.MomRegister(id, func(s Stomp) {
+		if e := send(s, conn); e != nil {
+			log.Printf("sending from stomp to mom error.%v", e)
+		}
+	})
+	defer tr.MomUnregister(id)
+
 	var msg []byte
+	ticker := time.NewTicker(time.Second * 5)
+	defer ticker.Stop()
+
+	pingFunc := func() {
+		for range ticker.C {
+			send(Stomp{Cmd:"MESSAGE", Body:map[string]string{"cmd":"ping"}}, conn)
+		}
+	}
+
 	for {
 		if msg, err = reader.ReadSlice(0); err != nil {
 			return
 		}
-		m.handle(NewStomp(msg))
+		if err = handle(tr, NewStomp(msg), conn, id, pingFunc); err != nil {
+			return
+		}
 	}
-	return
+
 }
 
-func (m *Mom) handle(stomp Stomp) {
+func handle(tr *StompTransport, stomp Stomp, conn net.Conn, id   string, pingFunc func()) (err error) {
 	log.Printf("mom message recieved.\n%v", string(stomp.ToStomp()))
 	switch {
-	case stomp.Cmd == "CONNECTED" :
-		s := Stomp{Cmd:"SUBSCRIBE", Header:map[string]string{
-			"destination":"/topic/relay-",
-			"ack":"" }}
-		m.send(s)
-	case stomp.Cmd == "MESSAGE" &&  stomp.Body != nil:
-
-
+	case stomp.Cmd == "SEND" &&  stomp.Body != nil:
+		stomp.Body["compositeId"] = id
+		err = tr.Send(stomp)
+	case stomp.Cmd == "CONNECT" :
+		err = send(Stomp{Cmd:"CONNECTED"}, conn)
+	case stomp.Cmd == "SUBSCRIBE" :
+		go pingFunc()
 	default:
 		log.Printf("mom: unknow message type: %v", stomp.Cmd)
 	}
-}
-
-func (tr *Mom) send(stomp Stomp) (err error) {
-	b := stomp.ToStomp()
-	log.Printf("mom sending\n%v", string(b))
-
-	if _, err = io.Copy(tr.conn, bytes.NewReader(append(b[:], []byte{0}[:]...))); err != nil {
-		return
-	}
 
 	return
 }
+
+func send(stomp Stomp, conn net.Conn) (err error) {
+	b := stomp.ToStomp()
+	if p := stomp.Body; p != nil && p["cmd"] != "ping" {
+		log.Printf("mom sending\n%v", string(b))
+	}
+	if _, err = io.Copy(conn, bytes.NewReader(append(b[:], []byte{0}[:]...))); err != nil {
+		return
+	}
+	return
+}
+
