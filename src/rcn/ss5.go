@@ -11,9 +11,11 @@ import (
 	"fmt"
 )
 
-func ss5(con net.Conn, revoked error) (err error) {
+// Mom or Connect, if boundPort is not null then op is binding
+func ss5(con net.Conn, cfg Config, chkCert func(string) (error)) (isMom bool, isBound bool, boundPort string, err error) {
 	remote := con.RemoteAddr()
 	var buf []byte
+	var pemCert string
 
 	read := func(size int, eStr string) (err error) {
 		buf = make([]byte, size)
@@ -74,7 +76,7 @@ func ss5(con net.Conn, revoked error) (err error) {
 		}
 		log.Printf("0x1e cert:\n %v", string(buf))
 
-		// TODO:cert check //////////////////////////
+		pemCert = string(buf)
 
 		if err = read(4, "0x1e cert st3"); err != nil {
 			return
@@ -84,7 +86,7 @@ func ss5(con net.Conn, revoked error) (err error) {
 	//check version
 	if buf[0] != 0x5 {
 		err = errors.New(fmt.Sprintf("ss5 st3 protocal error. value=%v", buf[0]))
-		return err
+		return
 	}
 	typeOp := buf[1]
 	typeAddr := buf[3]
@@ -92,7 +94,6 @@ func ss5(con net.Conn, revoked error) (err error) {
 	log.Printf("ss5 typeOp:%v typeAddr:%v %v", typeOp, typeAddr, remote)
 
 	bouceHost := ""
-	port := 0
 	//
 	switch typeAddr {
 	case 3:
@@ -119,11 +120,16 @@ func ss5(con net.Conn, revoked error) (err error) {
 	if err = read(2, "ss5 port error"); err != nil {
 		return
 	}
-	port = int(binary.BigEndian.Uint16(buf))
 
-	if (revoked != nil) {
-		write([]byte("REVOKED"), "")
-		err = errors.New(fmt.Sprintf("REVOKED. %v %v", revoked, remote))
+	boundPort = strconv.Itoa(int(binary.BigEndian.Uint16(buf)))
+
+	isMom = cfg.RelayInternal == bouceHost
+	isBound = typeOp == 2 &&  bouceHost == "localhost"
+
+	if err = chkCert(pemCert); err != nil {
+		if (err == REVOKED) {
+			write([]byte("REVOKED"), "")
+		}
 		return
 	}
 
@@ -131,8 +137,7 @@ func ss5(con net.Conn, revoked error) (err error) {
 		return
 	}
 
-
-	log.Printf("finished: %v:%v", bouceHost, port)
+	log.Printf("ss5 finished: %v:%v isMom:%v isBound:%v(%v)", bouceHost, boundPort, isMom, isBound, typeOp)
 
 	return
 }

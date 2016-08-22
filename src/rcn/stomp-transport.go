@@ -17,6 +17,8 @@ import (
 
 const AuthQueue = "/queue/RcnAuthQueue"
 
+var REVOKED = errors.New("REVOKED")
+
 type StompTransport struct {
 	conn         net.Conn
 	cfg          Config
@@ -24,12 +26,16 @@ type StompTransport struct {
 	responseMap  map[string]func(Stomp)
 	topic        string
 	sendCh       chan Stomp
+
+	mRelayMap    sync.RWMutex
+	relayMap     map[string]net.Conn
 }
 
 func NewStompTransport(cfg Config) (*StompTransport) {
 	tr := &StompTransport{cfg:cfg,
 		responseMap:make(map[string]func(Stomp)),
-		sendCh: make(chan Stomp, 1) }
+		sendCh: make(chan Stomp, 1),
+		relayMap:make(map[string]net.Conn) }
 	tr.topic = "relay-" + tr.cfg.id
 
 	go tr.StompConnect()
@@ -124,6 +130,8 @@ func (tr *StompTransport) handle(stomp Stomp) {
 			tr.mResponseMap.RLock()
 			if f := tr.responseMap[id]; f != nil {
 				f(stomp)
+			} else {
+				log.Printf("missing connection for id %v", id)
 			}
 			tr.mResponseMap.RUnlock()
 		}
@@ -165,8 +173,7 @@ func (tr *StompTransport)  SyncRequest(stomp Stomp) (response Stomp, err error) 
 	return
 }
 
-func (tr *StompTransport)  CheckCert(x509 *x509.Certificate, addr net.Addr) (cId string, err error) {
-
+func (tr *StompTransport)  CheckX509(x509 *x509.Certificate, addr net.Addr) (cId string, err error) {
 	var b bytes.Buffer
 	certWriter := bufio.NewWriter(&b)
 	if err = pem.Encode(certWriter, &pem.Block{Type: "CERTIFICATE", Bytes: x509.Raw}); err != nil {
@@ -174,20 +181,23 @@ func (tr *StompTransport)  CheckCert(x509 *x509.Certificate, addr net.Addr) (cId
 		return
 	}
 	certWriter.Flush()
+	return tr.CheckPem(string(b.Bytes()), addr)
+}
+func (tr *StompTransport)  CheckPem(pem string, addr net.Addr) (cId string, err error) {
 
 	a := strings.Split(addr.String(), ":")
 	s := Stomp{Cmd:"SEND",
 		Header:map[string]string{"destination":AuthQueue},
 		Body:map[string]string{
 			"cmd":"checkCert",
-			"cert":string(b.Bytes()),
+			"cert":pem,
 			"ep_address":a[0], "ep_port":a[1] }}
 
 	var response Stomp
 	if response, err = tr.SyncRequest(s); err == nil {
 		var ok bool
 		if status, _ := response.Body["confirmed"]; status != "true" {
-			err = errors.New(fmt.Sprintf("certificate could not be confirmed. %#v", response))
+			err = REVOKED
 		} else if cId, ok = response.Body["connectionIdentity"]; !ok {
 			err = errors.New(fmt.Sprintf("error: could not get connectionIdentity from payload\n%#v", response))
 		}
@@ -202,11 +212,37 @@ func (tr *StompTransport)  MomRegister(id string, f func(Stomp)) {
 	}
 	tr.responseMap[id] = f
 	tr.mResponseMap.Unlock()
+	log.Printf("MomRegister :%v", id)
 }
 
 func (tr *StompTransport)  MomUnregister(id string) {
 	tr.mResponseMap.Lock()
 	delete(tr.responseMap, id)
 	tr.mResponseMap.Unlock()
+	log.Printf("MomUnregister :%v", id)
+}
+
+func (tr *StompTransport)  RelayRegister(id string, conn net.Conn) {
+	tr.mRelayMap.Lock()
+	tr.relayMap[id] = conn
+	tr.mRelayMap.Unlock()
+
+	// timeout
+	go func() {
+		time.Sleep(5 * time.Second)
+		if con := tr.RelayRetrieve(id); con != nil {
+			r := con.RemoteAddr()
+			log.Printf("timeout on bound socket, connection closed. %v", r)
+			con.Close()
+		}
+	}()
+}
+
+func (tr *StompTransport)  RelayRetrieve(id string) (con net.Conn) {
+	tr.mRelayMap.Lock()
+	con = tr.relayMap[id]
+	delete(tr.relayMap, id)
+	tr.mRelayMap.Unlock()
+	return
 }
 

@@ -27,13 +27,13 @@ func main() {
 		log.Fatalf("cert could not be loaded %v", err)
 	}
 
-	conf := &tls.Config{
+	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		InsecureSkipVerify: true,
 		ClientAuth: tls.RequireAnyClientCert,
 	}
 
-	if (conf == nil) {
+	if (tlsConfig == nil) {
 		log.Fatal("ssl init failed")
 	}
 	stompTr :=rcn.NewStompTransport(cfg)
@@ -57,6 +57,6 @@ func main() {
 		if err != nil {
 			log.Printf("error during Accept(): %v", err)
 		}
-		go rcn.HandleConnection(conn, stompTr, conf)
+		go rcn.HandleConnection(conn, stompTr, tlsConfig, cfg)
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"log"
 	"crypto/tls"
 	"bytes"
-	"time"
 )
 
 var emptyBuffer = []byte{0, 0, 0, 0, 0}
@@ -26,65 +25,84 @@ func (w *sslConnection) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-var a net.Conn
+func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config, cfg Config) {
 
-func HandleConnection(con net.Conn, stompTr *StompTransport, conf *tls.Config) {
-	defer con.Close()
+	var keepConnection bool
+	var cId string = ""
+	remote := con.RemoteAddr()
+	var err error
+
+	defer func() {
+		if !keepConnection {
+			log.Printf("connection %v finised. %v", cId, remote)
+			con.Close()
+		}
+	}()
 	//con.SetReadDeadline(time.Now().Add(30 * time.Second))
 	//con.SetWriteDeadline(time.Now().Add(30 * time.Second))
 
-	var err error
-	var cId string = ""
-	remote := con.RemoteAddr()
+
+
 
 	buf := make([]byte, 5)
 	io.ReadFull(con, buf)
 
-	if bytes.Compare(buf, emptyBuffer) == 0 {
-		log.Printf("non - secured connection %v", remote)
-		if err = ss5(con, nil); err != nil {
-			log.Printf("non-ssl ss5 error. %v", err)
-		}
-		////////////////// TODO /////////////////
-		if a == nil {
-			a = con
-			io.Copy(con, bytes.NewReader([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0}))
-			time.Sleep(20 * time.Second)
-			a = nil
-		} else {
-			log.Printf("!!!!!!!!!!!! moving traffic  %v <-> %v", a.RemoteAddr(), con.RemoteAddr())
-			go func() {
-				io.Copy(a, con)
-			}()
-			io.Copy(con, a)
-		}
-		////////////////// TODO /////////////////
+	var targetConn net.Conn
+	var certFunc func(string) (error)
 
-	} else {
+	switch {
+	case bytes.Compare(buf, emptyBuffer) == 0 :
+		log.Printf("non - secured connection %v", remote)
+		targetConn = con
+		certFunc = func(cert string) (e error) {
+			cId, e = stompTr.CheckPem(cert, remote)
+			return
+		}
+	default:
 		log.Printf("secured connection %v", remote)
 		c := &sslConnection{con, &buf}
-		tlsConn := tls.Server(c, conf)
+		tlsConn := tls.Server(c, tlsConf)
 		if err = tlsConn.Handshake(); err != nil {
 			log.Printf("handshake failed. %v %v", err, remote)
 			return
 		}
-		defer tlsConn.Close()
-
-		var cId string
-		var revoked error
-
-		if cId, revoked = stompTr.CheckCert(tlsConn.ConnectionState().PeerCertificates[0], remote); err != nil {
-			log.Printf("cert declined. %v", err)
-		}
-		if err = ss5(tlsConn, revoked); err != nil {
-			log.Printf("ss5 error. %v", err)
+		targetConn = tlsConn
+		certFunc = func(string) (e error) {
+			cId, e = stompTr.CheckX509(tlsConn.ConnectionState().PeerCertificates[0], remote)
 			return
 		}
+	}
 
-		Mom(tlsConn, cId, stompTr)
+	isMom, isBound, boundPort, ss5Error := ss5(targetConn, cfg, certFunc)
+
+	switch  {
+	case ss5Error != nil:
+		log.Printf("SS5 connection error. %v", ss5Error)
+		return
+	case isMom:
+		Mom(targetConn, cId, stompTr)
+	case !isMom && isBound:
+		stompTr.RelayRegister(boundPort, targetConn)
+		log.Printf("SS5 connection bound. %v - %v", boundPort, remote)
+		io.Copy(targetConn, bytes.NewReader([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0}))
+		keepConnection = true
+	case !isMom && !isBound:
+		if c1 := stompTr.RelayRetrieve(boundPort); c1 != nil {
+			log.Printf("Start relaying. (%v) %v - %v", boundPort, c1.RemoteAddr(), remote)
+			go func() {
+				nb, _ := io.Copy(c1, targetConn)
+				log.Printf("write %v %v", nb, remote)
+			}()
+			nb, _ := io.Copy(targetConn, c1)
+			log.Printf("read %v %v", nb, remote)
+		} else {
+			log.Printf("Could not start relaying. (%v)  %v", boundPort, remote)
+		}
+	default:
+		log.Printf("error: no action for connection %v", remote)
 
 	}
 
-	log.Printf("connection %v finised. %v", cId, remote)
+
 }
 

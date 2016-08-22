@@ -1,5 +1,6 @@
 {
   "address": "127.0.0.1",
   "port": 7658,
-  "cert": "relay-cert.pem"
+  "cert": "relay-cert.pem",
+  "relayInternal":"defaultMOM"
 }

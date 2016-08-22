@@ -7,10 +7,11 @@ import (
 )
 
 type Config struct {
-	Address string
-	Port    int
-	Cert    string
-	id      string
+	Address       string
+	Port          int
+	Cert          string
+	RelayInternal string
+	id            string
 }
 
 func NewConfig(fileName string) Config {
@@ -23,7 +24,7 @@ func NewConfig(fileName string) Config {
 		log.Printf("error: %v", err)
 		panic("coud not load configuration")
 	}
-	cfg.id = uuid()
+	cfg.id = "test-relay1"//uuid()
 	log.Printf("configurtion loaded.\n %+v", cfg)
 	return cfg
 }
