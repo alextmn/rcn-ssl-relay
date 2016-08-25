@@ -7,6 +7,7 @@ import (
 	"io"
 	"bytes"
 	"time"
+	"strings"
 )
 
 func Mom(conn net.Conn, id   string, tr *StompTransport) (err error) {
@@ -18,7 +19,18 @@ func Mom(conn net.Conn, id   string, tr *StompTransport) (err error) {
 			log.Printf("sending from stomp to mom error.%v", e)
 		}
 	})
-	defer tr.MomUnregister(id)
+
+	defer func() {
+		s := Stomp{Cmd:"SEND",
+			Header:map[string]string{"destination":AuthQueue},
+			Body:map[string]string{
+				"compositeId" : id,
+				"cmd":"momUnsubscribe" }}
+		tr.Send(s)
+
+		tr.MomUnregister(id)
+
+	}()
 
 	var msg []byte
 	ticker := time.NewTicker(time.Second * 5)
@@ -50,6 +62,15 @@ func handle(tr *StompTransport, stomp Stomp, conn net.Conn, id   string, pingFun
 	case stomp.Cmd == "CONNECT" :
 		err = send(Stomp{Cmd:"CONNECTED"}, conn)
 	case stomp.Cmd == "SUBSCRIBE" :
+		a := strings.Split(conn.RemoteAddr().String(), ":")
+		s := Stomp{Cmd:"SEND",
+			Header:map[string]string{"destination":AuthQueue},
+			Body:map[string]string{
+				"compositeId" : id,
+				"cmd":"momSubscribe",
+				"ep_address":a[0], "ep_port":a[1] }}
+		tr.Send(s)
+
 		go pingFunc()
 	default:
 		log.Printf("mom: unknow message type: %v", stomp.Cmd)

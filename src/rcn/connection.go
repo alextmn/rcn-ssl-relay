@@ -6,6 +6,9 @@ import (
 	"log"
 	"crypto/tls"
 	"bytes"
+	"./../ratelimit"
+	"time"
+	"net/http/httputil"
 )
 
 var emptyBuffer = []byte{0, 0, 0, 0, 0}
@@ -40,8 +43,6 @@ func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config
 	}()
 	//con.SetReadDeadline(time.Now().Add(30 * time.Second))
 	//con.SetWriteDeadline(time.Now().Add(30 * time.Second))
-
-
 
 
 	buf := make([]byte, 5)
@@ -89,12 +90,8 @@ func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config
 	case !isMom && !isBound:
 		if c1 := stompTr.RelayRetrieve(boundPort); c1 != nil {
 			log.Printf("Start relaying. (%v) %v - %v", boundPort, c1.RemoteAddr(), remote)
-			go func() {
-				nb, _ := io.Copy(c1, targetConn)
-				log.Printf("write %v %v", nb, remote)
-			}()
-			nb, _ := io.Copy(targetConn, c1)
-			log.Printf("read %v %v", nb, remote)
+			//startRelay(c1, targetConn, stompTr, remote, cfg)
+			startRelayLimitRate(c1, targetConn, stompTr, remote, cfg)
 		} else {
 			log.Printf("Could not start relaying. (%v)  %v", boundPort, remote)
 		}
@@ -103,6 +100,33 @@ func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config
 
 	}
 
+}
+
+func startRelay(c1, c2 net.Conn, stompTr *StompTransport, remote net.Addr, cfg Config) {
+	start := time.Now()
+	go func() {
+		nb, _ := io.Copy(c1, c2)
+		log.Printf("written %v bytes in %s (%v)", nb, time.Since(start), remote)
+	}()
+	nb, _ := io.Copy(c2, c1)
+	log.Printf("read %v bytes in %s (%v)", nb, time.Since(start), remote)
+}
+
+func startRelayLimitRate(c1, c2 net.Conn, stompTr *StompTransport, remote net.Addr, cfg Config) {
+	// Bucket adding 100KB every second, holding max 100KB
+	start := time.Now()
+	go func() {
+		bucket1 := ratelimit.NewBucketWithRate(100 * 1024, 100 * 1024)
+		nb, _ := io.Copy(c1, ratelimit.Reader(c2, bucket1))
+		c1.Close()
+		log.Printf("written %v bytes in %s (%v)", nb, time.Since(start), remote)
+	}()
+
+	bucket2 := ratelimit.NewBucketWithRate(100 * 1024, 100 * 1024)
+	nb, _ := io.Copy(c2, ratelimit.Reader(c1, bucket2))
+	log.Printf("read %v bytes in %s (%v)", nb, time.Since(start), remote)
+	c2.Close()
 
 }
+
 
