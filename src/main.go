@@ -23,9 +23,11 @@ func main() {
 	}
 	log.Printf("loaded certificate:\n%v", string(certFile))
 	cert, err := tls.X509KeyPair(certFile, certFile)
+
 	if (err != nil) {
 		log.Fatalf("cert could not be loaded %v", err)
 	}
+	cfg.SetId(cert)
 
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
@@ -36,7 +38,7 @@ func main() {
 	if (tlsConfig == nil) {
 		log.Fatal("ssl init failed")
 	}
-	stompTr :=rcn.NewStompTransport(cfg)
+	stompTr :=rcn.NewStompTransport(cfg, tlsConfig)
 
 	endpoint := cfg.Address + ":" + strconv.Itoa(cfg.Port)
 	log.Printf("going to listen on %v", endpoint)

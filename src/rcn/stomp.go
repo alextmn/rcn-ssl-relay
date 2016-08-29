@@ -2,7 +2,6 @@ package rcn
 
 import (
 	"bufio"
-	"fmt"
 	"bytes"
 	"errors"
 	"net/url"
@@ -66,11 +65,4 @@ func (m Stomp) ToStomp() ([]byte) {
 	return buf.Bytes()
 }
 
-func main() {
 
-	var s [] byte
-	s = []byte("MESSAGE\nheader1:123\nheader2:345\n\nbody1=abc\nbody2=cde")
-	m := NewStomp(s)
-	fmt.Printf("the line\n%s\n", m.ToStomp())
-
-}

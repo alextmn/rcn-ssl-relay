@@ -13,6 +13,8 @@ import (
 	"encoding/pem"
 	"crypto/x509"
 	"fmt"
+	"crypto/tls"
+	"strconv"
 )
 
 const AuthQueue = "/queue/RcnAuthQueue"
@@ -31,29 +33,36 @@ type StompTransport struct {
 	relayMap     map[string]net.Conn
 }
 
-func NewStompTransport(cfg Config) (*StompTransport) {
+func NewStompTransport(cfg Config, tlsConf *tls.Config) (*StompTransport) {
 	tr := &StompTransport{cfg:cfg,
 		responseMap:make(map[string]func(Stomp)),
 		sendCh: make(chan Stomp, 1),
 		relayMap:make(map[string]net.Conn) }
-	tr.topic = "relay-" + tr.cfg.id
+	tr.topic = cfg.id
 
-	go tr.StompConnect()
+	go tr.StompConnect(cfg, tlsConf)
 	return tr
 }
 
-func (tr *StompTransport) StompConnect() {
+func (tr *StompTransport) StompConnect(cfg Config, tlsConf *tls.Config) {
 	for {
-		tr.startTransport()
-		log.Printf("stomp connection lost, reconnection in %v seconds", 5)
-		time.Sleep(5 * time.Second)
+		tr.startTransport(cfg, tlsConf)
+		log.Printf("stomp connection lost, reconnection in %v seconds", cfg.ReconnectSec)
+		time.Sleep(time.Duration(cfg.ReconnectSec) * time.Second)
 	}
 }
 
-func (tr *StompTransport) startTransport() (err error) {
-	log.Printf("trying to connect to stomp %v:%v", "", 55)
+func (tr *StompTransport) startTransport(cfg Config, tlsConf *tls.Config) (err error) {
+	log.Print("trying to connect to stomp")
 
-	tr.conn, err = net.Dial("tcp", "127.0.0.1:61612")
+	address := cfg.StompAddress + ":" + strconv.Itoa(cfg.StompPort)
+	switch {
+	case cfg.StompSSL:
+		tr.conn, err = tls.Dial("tcp", address, tlsConf)
+	default:
+		tr.conn, err = net.Dial("tcp", address)
+	}
+
 	if (err != nil) {
 		log.Printf("stomp connaction error. %v", err)
 		return
@@ -69,7 +78,7 @@ func (tr *StompTransport) startTransport() (err error) {
 
 	reader := bufio.NewReader(tr.conn)
 	for {
-		tr.conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		tr.conn.SetReadDeadline(time.Now().Add(time.Duration(cfg.MomConnectTimeoutSec) * time.Second))
 		var msg []byte
 		msg, err = reader.ReadSlice(0)
 		if (err != nil) {
@@ -77,7 +86,7 @@ func (tr *StompTransport) startTransport() (err error) {
 			return
 		}
 
-		tr.handle(NewStomp(msg))
+		tr.handle(NewStomp(msg), cfg)
 	}
 
 	return
@@ -89,8 +98,8 @@ func (tr *StompTransport) Send(stomp Stomp) (err error) {
 	}
 	select {
 	case tr.sendCh <- stomp:
-	case <-time.After(1 * time.Second):
-		err = errors.New(fmt.Sprintf("message dropped after 2 sec of trying to deliver it to stomp\n%#v", stomp))
+	case <-time.After(time.Duration(tr.cfg.StalledMsgDropAfterSec) * time.Second):
+		err = errors.New(fmt.Sprintf("message dropped after %v sec of trying to deliver it to stomp\n%#v", tr.cfg.StalledMsgDropAfterSec, stomp))
 	}
 
 	return
@@ -115,8 +124,8 @@ func sender(conn net.Conn, ch chan Stomp, abort chan int) {
 	}
 }
 
-func (tr *StompTransport) handle(stomp Stomp) {
-	if p := stomp.Body; p != nil && p["cmd"] != "ping" {
+func (tr *StompTransport) handle(stomp Stomp, cfg Config) {
+	if p := stomp.Body; p != nil && (p["cmd"] != "ping" || cfg.ShowPing ) {
 		log.Printf("stomp message recieved.\n%v", string(stomp.ToStomp()))
 	}
 	switch {
@@ -140,7 +149,8 @@ func (tr *StompTransport) handle(stomp Stomp) {
 		} else if id, ok := stomp.Body["compositeId"]; ok {
 			invoke(id)
 		}
-
+	case stomp.Cmd == "REVOKED" :
+		panic("relay REVOKED")
 	default:
 		log.Printf("unknow message type: %v", stomp.Cmd)
 	}
@@ -162,7 +172,7 @@ func (tr *StompTransport)  SyncRequest(stomp Stomp) (response Stomp, err error) 
 		select {
 		case res := <-c1:
 			response = res
-		case <-time.After(time.Second * 10):
+		case <-time.After(time.Second * time.Duration(tr.cfg.SyncMaxResponseSec)):
 			err = errors.New("stomp timeout " + id)
 		}
 	}
@@ -229,10 +239,10 @@ func (tr *StompTransport)  RelayRegister(id string, conn net.Conn) {
 
 	// timeout
 	go func() {
-		time.Sleep(5 * time.Second)
+		time.Sleep(time.Duration(tr.cfg.RegRelayTimeoutSec) * time.Second)
 		if con := tr.RelayRetrieve(id); con != nil {
 			r := con.RemoteAddr()
-			log.Printf("timeout on bound socket, connection closed. %v", r)
+			log.Printf("timeout %v sec on bound socket, connection closed. %v", tr.cfg.RegRelayTimeoutSec, r)
 			con.Close()
 		}
 	}()

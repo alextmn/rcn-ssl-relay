@@ -1,6 +1,15 @@
 {
   "address": "127.0.0.1",
   "port": 7658,
+  "stompAddress": "127.0.0.1",
+  "stompPort": 61612,
+  "stompSSL": false,
   "cert": "relay-cert.pem",
-  "relayInternal":"defaultMOM"
+  "relayInternal": "defaultMOM",
+  "showPing": false,
+  "momConnectTimeoutSec": 30,
+  "reconnectSec": 5,
+  "stalledMsgDropAfterSec": 15,
+  "syncMaxResponseSec": 15,
+  "regRelayTimeoutSec": 20
 }
