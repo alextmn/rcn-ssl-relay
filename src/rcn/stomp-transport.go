@@ -15,9 +15,11 @@ import (
 	"fmt"
 	"crypto/tls"
 	"strconv"
+	"math/rand"
 )
 
 const AuthQueue = "/queue/RcnAuthQueue"
+const HistQueue = "/queue/RcnHistoryQueue"
 
 var REVOKED = errors.New("REVOKED")
 
@@ -230,6 +232,28 @@ func (tr *StompTransport)  MomUnregister(id string) {
 	delete(tr.responseMap, id)
 	tr.mResponseMap.Unlock()
 	log.Printf("MomUnregister :%v", id)
+}
+
+func (tr *StompTransport) AllocateShortId() (uint16) {
+	for i := 0; i < 10; i++ {
+		r := rand.New(rand.NewSource(time.Now().UnixNano()))
+		v := r.Intn(64000)
+		ok := false
+
+		tr.mRelayMap.Lock()
+		if tr.relayMap[strconv.Itoa(v)] == nil {
+			log.Printf("random number for relaying %v", v)
+			ok = true;
+		}
+		tr.mRelayMap.Unlock()
+
+		if ok {
+			return uint16(v)
+		}
+
+	}
+	log.Print("cant generate a random number to bind relay")
+	return 0
 }
 
 func (tr *StompTransport)  RelayRegister(id string, conn net.Conn) {

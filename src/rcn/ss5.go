@@ -12,7 +12,8 @@ import (
 )
 
 // Mom or Connect, if boundPort is not null then op is binding
-func ss5(con net.Conn, cfg Config, chkCert func(string) (error)) (isMom bool, isBound bool, boundPort string, err error) {
+func ss5(con net.Conn, cfg Config, chkCert func(string) (error),
+bindFunc func() (uint16)) (isMom bool, isBound bool, boundPort string, err error) {
 	remote := con.RemoteAddr()
 	var buf []byte
 	var pemCert string
@@ -121,7 +122,11 @@ func ss5(con net.Conn, cfg Config, chkCert func(string) (error)) (isMom bool, is
 		return
 	}
 
-	boundPort = strconv.Itoa(int(binary.BigEndian.Uint16(buf)))
+	boundPortInt16 := binary.BigEndian.Uint16(buf)
+	if (typeOp == 2) {
+		boundPortInt16 = bindFunc()
+	}
+	boundPort = strconv.Itoa(int(boundPortInt16))
 
 	isMom = cfg.RelayInternal == bouceHost
 	isBound = typeOp == 2 &&  bouceHost == "localhost"
@@ -133,7 +138,10 @@ func ss5(con net.Conn, cfg Config, chkCert func(string) (error)) (isMom bool, is
 		return
 	}
 
-	if err = write([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0}, "ss5 final write failed"); err != nil {
+	bouncePortBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(bouncePortBytes, boundPortInt16)
+
+	if err = write(append([]byte{5, 0, 0, 1, 0, 0, 0, 0}, bouncePortBytes...), "ss5 final write failed"); err != nil {
 		return
 	}
 

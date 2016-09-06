@@ -84,7 +84,7 @@ func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config
 		}
 	}
 
-	isMom, isBound, boundPort, ss5Error := ss5(targetConn, cfg, certFunc)
+	isMom, isBound, boundPort, ss5Error := ss5(targetConn, cfg, certFunc, stompTr.AllocateShortId)
 
 	switch  {
 	case ss5Error != nil:
