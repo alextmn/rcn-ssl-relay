@@ -33,6 +33,7 @@ func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config
 
 	var keepConnection bool
 	var cId string = ""
+	var name string = ""
 	remote := con.RemoteAddr()
 	var err error
 
@@ -59,7 +60,7 @@ func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config
 		log.Printf("non - secured connection %v", remote)
 		targetConn = con
 		certFunc = func(cert string) (e error) {
-			cId, e = stompTr.CheckPem(cert, remote)
+			cId, name, e = stompTr.CheckPem(cert, "", remote)
 			return
 		}
 	default:
@@ -73,13 +74,13 @@ func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config
 		}
 		targetConn = tlsConn
 		var x590Error error
-		cId, x590Error = stompTr.CheckX509(tlsConn.ConnectionState().PeerCertificates[0], remote)
+		cId, name, x590Error = stompTr.CheckX509(tlsConn.ConnectionState().PeerCertificates[0], remote)
 		certFunc = func(string) (error) {
 			return x590Error
 		}
 
-		if (strings.Contains(cId, "up-relay-")) {
-			err = upRelay(tlsConn, cfg, tlsConf)
+		if (strings.Contains(name, "://")) {
+			err = upForward(name, tlsConn, cfg, tlsConf)
 			return
 		}
 	}
@@ -101,9 +102,11 @@ func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config
 		if c1 := stompTr.RelayRetrieve(boundPort); c1 != nil {
 			log.Printf("Start relaying , SSL:%v. (%v) %v - %v", isSSL, boundPort, c1.RemoteAddr(), remote)
 			//startRelay(c1, targetConn, stompTr, remote, cfg)
-			startRelayLimitRate(c1, targetConn, stompTr, remote, cfg)
+			c12nb, c21, started := relay(c1, targetConn, 0);
+			log.Printf("bound relay finished %v/%v bytes in %s (%v)", c12nb, c21, time.Since(started), remote)
+
 		} else {
-			log.Printf("Could not start relaying, SSL:%v. (%v)  %v",isSSL, boundPort, remote)
+			log.Printf("Could not start relaying, SSL:%v. (%v)  %v", isSSL, boundPort, remote)
 		}
 	default:
 		log.Printf("error: no action for connection %v", remote)
@@ -112,61 +115,54 @@ func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config
 
 }
 
-func startRelay(c1, c2 net.Conn, stompTr *StompTransport, remote net.Addr, cfg Config) {
-	start := time.Now()
-	go func() {
-		nb, _ := io.Copy(c1, c2)
-		log.Printf("written %v bytes in %s (%v)", nb, time.Since(start), remote)
-	}()
-	nb, _ := io.Copy(c2, c1)
-	log.Printf("read %v bytes in %s (%v)", nb, time.Since(start), remote)
 
-
-}
-
-func startRelayLimitRate(c1, c2 net.Conn, stompTr *StompTransport, remote net.Addr, cfg Config) {
-	// Bucket adding 100KB every second, holding max 100KB
-	start := time.Now()
-	go func() {
-		bucket1 := ratelimit.NewBucketWithRate(100 * 1024, 100 * 1024)
-		nb, _ := io.Copy(c1, ratelimit.Reader(c2, bucket1))
-		c1.Close()
-		log.Printf("written %v bytes in %s (%v)", nb, time.Since(start), remote)
-	}()
-
-	bucket2 := ratelimit.NewBucketWithRate(100 * 1024, 100 * 1024)
-	nb, _ := io.Copy(c2, ratelimit.Reader(c1, bucket2))
-	log.Printf("read %v bytes in %s (%v)", nb, time.Since(start), remote)
-	c2.Close()
-
-}
-
-func upRelay(conn *tls.Conn, cfg Config, tlsConf *tls.Config) (err error) {
+func upForward(name string, conn *tls.Conn, cfg Config, tlsConf *tls.Config) (err error) {
 	var up net.Conn
-	address := cfg.StompAddress + ":" + strconv.Itoa(cfg.StompPort)
 	switch {
-	case cfg.StompSSL:
-		up, err = tls.Dial("tcp", address, tlsConf)
-	default:
+	case strings.HasPrefix(name, "relay://"):
+		address := cfg.StompAddress + ":" + strconv.Itoa(cfg.StompPort)
 		up, err = net.Dial("tcp", address)
+	case strings.HasPrefix(name, "http://"):
+		up, err = net.Dial("tcp", name[7:len(name)])
+	case strings.HasPrefix(name, "https://"):
+		up, err = tls.Dial("tcp", name[8:len(name)], tlsConf)
+	default:
+		log.Printf("the url %v is not implemented", name)
+		return
 	}
 	if (err != nil) {
 		log.Printf("up stomp connection to stomp service failed:%v", err)
 		return
 	}
-
-	start := time.Now()
-	go func() {
-		nb, _ := io.Copy(conn, up)
-		log.Printf("up stomp connection written %v bytes in %s (%v)", nb, time.Since(start), up)
-		up.Close()
-	}()
-	nb, _ := io.Copy(up, conn)
-	conn.Close()
-	log.Printf("up stomp connection  %v bytes in %s (%v)", nb, time.Since(start), up)
-
+	c12nb, c21, started := relay(conn, up, 0);
+	log.Printf("forward relay finished. %v : %v/%v bytes in %s (%v)", name, c12nb, c21, time.Since(started), up)
 	return
+}
 
+func rcopy(c1, c2 net.Conn, rate int64) (written int64, err error) {
+	switch  {
+	case rate > 0:
+		// Bucket adding 100KB every second, holding max 100KB
+		// e.g ratelimit.NewBucketWithRate(100 * 1024, 100 * 1024)
+		return io.Copy(c1, ratelimit.Reader(c2, ratelimit.NewBucketWithRate(float64(rate), rate)))
+	default:
+		return io.Copy(c1, c2)
+	}
+}
+func relay(c1, c2 net.Conn, rate int64) (c12nb, c21nb int64, started time.Time) {
+	started = time.Now()
+	ch := make(chan int64)
+	go func() {
+		nb, _ := rcopy(c1, c2, rate)
+		c1.Close()
+		c2.Close()
+		ch <- nb
+	}()
+	c21nb, _ = rcopy(c2, c1, rate)
+	c1.Close()
+	c2.Close()
+	c12nb = <- ch
+	return
 }
 
 

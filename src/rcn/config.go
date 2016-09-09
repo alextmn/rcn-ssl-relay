@@ -44,16 +44,16 @@ func NewConfig(fileName string) Config {
 func (c*Config) SetId(cert tls.Certificate) {
 	switch {
 	case c.StompSSL:
-		c.id = "uni-relay-ssl-" + getFingerprint(cert.Certificate[0])
+		c.id = "uni-relay-ssl-" + CalcFingerprint(cert.Certificate[0])
 	default:
-		c.id = "uni-relay-" + getFingerprint(cert.Certificate[0])
+		c.id = "uni-relay-" + CalcFingerprint(cert.Certificate[0])
 	}
 
 	log.Printf("relay id:  %v", c.id)
 
 }
 
-func getFingerprint(der []byte) string {
+func CalcFingerprint(der []byte) string {
 	hash := sha1.Sum(der)
 	hexified := make([][]byte, len(hash))
 	for i, data := range hash {

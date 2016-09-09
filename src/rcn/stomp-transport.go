@@ -185,7 +185,7 @@ func (tr *StompTransport)  SyncRequest(stomp Stomp) (response Stomp, err error) 
 	return
 }
 
-func (tr *StompTransport)  CheckX509(x509 *x509.Certificate, addr net.Addr) (cId string, err error) {
+func (tr *StompTransport)  CheckX509(x509 *x509.Certificate, addr net.Addr) (cId string, name string, err error) {
 	var b bytes.Buffer
 	certWriter := bufio.NewWriter(&b)
 	if err = pem.Encode(certWriter, &pem.Block{Type: "CERTIFICATE", Bytes: x509.Raw}); err != nil {
@@ -193,17 +193,22 @@ func (tr *StompTransport)  CheckX509(x509 *x509.Certificate, addr net.Addr) (cId
 		return
 	}
 	certWriter.Flush()
-	return tr.CheckPem(string(b.Bytes()), addr)
+	fingerprint := CalcFingerprint(x509.Raw)
+	return tr.CheckPem(string(b.Bytes()), fingerprint, addr)
 }
-func (tr *StompTransport)  CheckPem(pem string, addr net.Addr) (cId string, err error) {
+func (tr *StompTransport)  CheckPem(pem string, fingerprint string, addr net.Addr) (cId string, name string, err error) {
 
 	a := strings.Split(addr.String(), ":")
+	body := map[string]string{
+		"cmd":"checkCert",
+		"fingerprint":fingerprint,
+		"ep_address":a[0], "ep_port":a[1] }
+	if len(fingerprint) == 0 {
+		body["cert"] = pem
+	}
 	s := Stomp{Cmd:"SEND",
 		Header:map[string]string{"destination":AuthQueue},
-		Body:map[string]string{
-			"cmd":"checkCert",
-			"cert":pem,
-			"ep_address":a[0], "ep_port":a[1] }}
+		Body:body }
 
 	var response Stomp
 	if response, err = tr.SyncRequest(s); err == nil {
@@ -212,6 +217,10 @@ func (tr *StompTransport)  CheckPem(pem string, addr net.Addr) (cId string, err 
 			err = REVOKED
 		} else if cId, ok = response.Body["connectionIdentity"]; !ok {
 			err = errors.New(fmt.Sprintf("error: could not get connectionIdentity from payload\n%#v", response))
+		}
+
+		if name, ok = response.Body["name"]; !ok {
+			name = ""
 		}
 	}
 	return
