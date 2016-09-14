@@ -23,6 +23,12 @@ const HistQueue = "/queue/RcnHistoryQueue"
 
 var REVOKED = errors.New("REVOKED")
 
+type RelayRegisterRec struct {
+	conn  net.Conn
+	cId   string
+	isSsl bool
+}
+
 type StompTransport struct {
 	conn         net.Conn
 	cfg          Config
@@ -32,14 +38,14 @@ type StompTransport struct {
 	sendCh       chan Stomp
 
 	mRelayMap    sync.RWMutex
-	relayMap     map[string]net.Conn
+	relayMap     map[string]RelayRegisterRec
 }
 
 func NewStompTransport(cfg Config, tlsConf *tls.Config) (*StompTransport) {
 	tr := &StompTransport{cfg:cfg,
 		responseMap:make(map[string]func(Stomp)),
 		sendCh: make(chan Stomp, 1),
-		relayMap:make(map[string]net.Conn) }
+		relayMap:make(map[string]RelayRegisterRec) }
 	tr.topic = cfg.id
 
 	go tr.StompConnect(cfg, tlsConf)
@@ -199,16 +205,13 @@ func (tr *StompTransport)  CheckX509(x509 *x509.Certificate, addr net.Addr) (cId
 func (tr *StompTransport)  CheckPem(pem string, fingerprint string, addr net.Addr) (cId string, name string, err error) {
 
 	a := strings.Split(addr.String(), ":")
-	body := map[string]string{
-		"cmd":"checkCert",
-		"fingerprint":fingerprint,
-		"ep_address":a[0], "ep_port":a[1] }
-	if len(fingerprint) == 0 {
-		body["cert"] = pem
-	}
 	s := Stomp{Cmd:"SEND",
 		Header:map[string]string{"destination":AuthQueue},
-		Body:body }
+		Body:map[string]string{
+			"cmd":"checkCert",
+			"cert":pem,
+			"fingerprint":fingerprint,
+			"ep_address":a[0], "ep_port":a[1] }}
 
 	var response Stomp
 	if response, err = tr.SyncRequest(s); err == nil {
@@ -250,7 +253,7 @@ func (tr *StompTransport) AllocateShortId() (uint16) {
 		ok := false
 
 		tr.mRelayMap.Lock()
-		if tr.relayMap[strconv.Itoa(v)] == nil {
+		if _, e := tr.relayMap[strconv.Itoa(v)]; !e {
 			log.Printf("random number for relaying %v", v)
 			ok = true;
 		}
@@ -265,25 +268,25 @@ func (tr *StompTransport) AllocateShortId() (uint16) {
 	return 0
 }
 
-func (tr *StompTransport)  RelayRegister(id string, conn net.Conn) {
+func (tr *StompTransport)  RelayRegister(id string, conn net.Conn, cId string, isSsl bool) {
 	tr.mRelayMap.Lock()
-	tr.relayMap[id] = conn
+	tr.relayMap[id] = RelayRegisterRec{conn, cId, isSsl}
 	tr.mRelayMap.Unlock()
 
 	// timeout
 	go func() {
 		time.Sleep(time.Duration(tr.cfg.RegRelayTimeoutSec) * time.Second)
-		if con := tr.RelayRetrieve(id); con != nil {
-			r := con.RemoteAddr()
+		if result, exists := tr.RelayRetrieve(id); exists {
+			r := result.conn.RemoteAddr()
 			log.Printf("timeout %v sec on bound socket, connection closed. %v", tr.cfg.RegRelayTimeoutSec, r)
-			con.Close()
+			result.conn.Close()
 		}
 	}()
 }
 
-func (tr *StompTransport)  RelayRetrieve(id string) (con net.Conn) {
+func (tr *StompTransport)  RelayRetrieve(id string) (result RelayRegisterRec, exists bool) {
 	tr.mRelayMap.Lock()
-	con = tr.relayMap[id]
+	result, exists = tr.relayMap[id]
 	delete(tr.relayMap, id)
 	tr.mRelayMap.Unlock()
 	return

@@ -125,6 +125,7 @@ bindFunc func() (uint16)) (isMom bool, isBound bool, boundPort string, err error
 	boundPortInt16 := binary.BigEndian.Uint16(buf)
 	if (typeOp == 2) {
 		boundPortInt16 = bindFunc()
+		log.Printf("ss5 bindning to: %v", boundPortInt16)
 	}
 	boundPort = strconv.Itoa(int(boundPortInt16))
 

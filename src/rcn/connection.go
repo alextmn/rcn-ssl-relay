@@ -36,6 +36,7 @@ func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config
 	var name string = ""
 	remote := con.RemoteAddr()
 	var err error
+	startedTime := time.Now()
 
 	defer func() {
 		if !keepConnection {
@@ -66,6 +67,7 @@ func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config
 	default:
 		isSSL = true
 		log.Printf("secured connection %v", remote)
+
 		c := &sslConnection{con, &buf}
 		tlsConn := tls.Server(c, tlsConf)
 		if err = tlsConn.Handshake(); err != nil {
@@ -80,7 +82,10 @@ func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config
 		}
 
 		if (strings.Contains(name, "://")) {
-			err = upForward(name, tlsConn, cfg, tlsConf)
+			sendForwardStartHst(stompTr, cId, name, remote)
+			var nb12, nb21 int64
+			err, nb12, nb21 = upForward(name, tlsConn, cfg, tlsConf)
+			sendForwardClosedHst(stompTr, cId, startedTime, name, nb12, nb21, remote)
 			return
 		}
 	}
@@ -92,18 +97,23 @@ func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config
 		log.Printf("SS5 connection error. %v", ss5Error)
 		return
 	case isMom:
+		sendForwardStartHst(stompTr, cId, "mom", remote)
 		Mom(targetConn, cId, stompTr)
+		sendForwardClosedHst(stompTr, cId, startedTime, "mom", 0, 0, remote)
 	case !isMom && isBound:
-		stompTr.RelayRegister(boundPort, targetConn)
+		stompTr.RelayRegister(boundPort, targetConn, cId, isSSL)
 		log.Printf("SS5 connection bound, SSL:%v. %v - %v", isSSL, boundPort, remote)
 		io.Copy(targetConn, bytes.NewReader([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0}))
 		keepConnection = true
 	case !isMom && !isBound:
-		if c1 := stompTr.RelayRetrieve(boundPort); c1 != nil {
-			log.Printf("Start relaying , SSL:%v. (%v) %v - %v", isSSL, boundPort, c1.RemoteAddr(), remote)
-			//startRelay(c1, targetConn, stompTr, remote, cfg)
-			c12nb, c21, started := relay(c1, targetConn, 0);
+		if other, exists := stompTr.RelayRetrieve(boundPort); exists {
+			log.Printf("Start relaying , SSL:%v. (%v) %v - %v", isSSL, boundPort, other.conn.RemoteAddr(), remote)
+
+			sendRelayStartHst(stompTr, other.cId, cId, other.conn.RemoteAddr(), remote, false, isSSL)
+			c12nb, c21, started := relay(other.conn, targetConn, 0);
 			log.Printf("bound relay finished %v/%v bytes in %s (%v)", c12nb, c21, time.Since(started), remote)
+			sendRelayCloseHst(stompTr, other.cId, cId, other.conn.RemoteAddr(),
+				remote, other.isSsl, isSSL, c12nb, c21, started)
 
 		} else {
 			log.Printf("Could not start relaying, SSL:%v. (%v)  %v", isSSL, boundPort, remote)
@@ -115,8 +125,7 @@ func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config
 
 }
 
-
-func upForward(name string, conn *tls.Conn, cfg Config, tlsConf *tls.Config) (err error) {
+func upForward(name string, conn *tls.Conn, cfg Config, tlsConf *tls.Config) (err error, c12nb, c21 int64) {
 	var up net.Conn
 	switch {
 	case strings.HasPrefix(name, "relay://"):
@@ -134,6 +143,7 @@ func upForward(name string, conn *tls.Conn, cfg Config, tlsConf *tls.Config) (er
 		log.Printf("up stomp connection to stomp service failed:%v", err)
 		return
 	}
+
 	c12nb, c21, started := relay(conn, up, 0);
 	log.Printf("forward relay finished. %v : %v/%v bytes in %s (%v)", name, c12nb, c21, time.Since(started), up)
 	return
@@ -161,7 +171,7 @@ func relay(c1, c2 net.Conn, rate int64) (c12nb, c21nb int64, started time.Time) 
 	c21nb, _ = rcopy(c2, c1, rate)
 	c1.Close()
 	c2.Close()
-	c12nb = <- ch
+	c12nb = <-ch
 	return
 }
 
