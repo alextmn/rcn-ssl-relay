@@ -29,7 +29,7 @@ func (w *sslConnection) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config, cfg Config) {
+func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config, cfg Config, proxy *RcnProxy) {
 
 	var keepConnection bool
 	var cId string = ""
@@ -84,8 +84,9 @@ func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config
 		if (strings.Contains(name, "://")) {
 			sendForwardStartHst(stompTr, cId, name, remote)
 			var nb12, nb21 int64
-			err, nb12, nb21 = upForward(name, tlsConn, cfg, tlsConf)
+			err, nb12, nb21 = upForward(name, tlsConn, cfg, tlsConf, proxy)
 			sendForwardClosedHst(stompTr, cId, startedTime, name, nb12, nb21, remote)
+			keepConnection = true
 			return
 		}
 	}
@@ -125,16 +126,22 @@ func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config
 
 }
 
-func upForward(name string, conn *tls.Conn, cfg Config, tlsConf *tls.Config) (err error, c12nb, c21 int64) {
+func upForward(name string, conn *tls.Conn, cfg Config, tlsConf *tls.Config, proxy *RcnProxy) (err error, c12nb, c21 int64) {
 	var up net.Conn
 	switch {
 	case strings.HasPrefix(name, "relay://"):
 		address := cfg.StompAddress + ":" + strconv.Itoa(cfg.StompPort)
 		up, err = net.Dial("tcp", address)
 	case strings.HasPrefix(name, "http://"):
-		up, err = net.Dial("tcp", name[7:len(name)])
+		//up, err = net.Dial("tcp", name[7:len(name)])
+		log.Printf("forwarding request to :%v", name)
+		proxy.RcnProxyRequest(conn, name)
+		return  nil, 0, 0
 	case strings.HasPrefix(name, "https://"):
-		up, err = tls.Dial("tcp", name[8:len(name)], tlsConf)
+		//up, err = tls.Dial("tcp", name[8:len(name)], tlsConf)
+		log.Printf("forwarding request to :%v", name)
+		proxy.RcnProxyRequest(conn, name)
+		return  nil, 0, 0
 	default:
 		log.Printf("the url %v is not implemented", name)
 		return

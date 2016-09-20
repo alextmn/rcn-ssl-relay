@@ -52,6 +52,8 @@ func main() {
 
 	log.Printf("listener started %v", listener.Addr())
 
+	proxy := rcn.NewRcnProxy()
+
 	defer listener.Close()
 
 	for {
@@ -59,6 +61,6 @@ func main() {
 		if err != nil {
 			log.Printf("error during Accept(): %v", err)
 		}
-		go rcn.HandleConnection(conn, stompTr, tlsConfig, cfg)
+		go rcn.HandleConnection(conn, stompTr, tlsConfig, cfg, proxy)
 	}
 }
