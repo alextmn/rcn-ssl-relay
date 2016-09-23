@@ -38,8 +38,7 @@ func (p *RcnProxy) Addr() (net.Addr) {
 func (p *RcnProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	k := hex.EncodeToString(r.TLS.TLSUnique)
 	if baseUrl, ok := p.cache.Get(k); ok {
-		w.Header().Set("X-GoProxy", "GoProxy")
-		r.Header.Set("X-Forwarded-Proto", "https")
+		//r.Header.Set("X-Forwarded-Proto", "https")
 
 		log.Printf("proxy request to %v\n", baseUrl)
 		started := time.Now()
@@ -65,7 +64,7 @@ func NewRcnProxy() (p *RcnProxy) {
 	return p
 }
 
-func (p *RcnProxy) RcnProxyRequest(conn net.Conn, basePath string) {
+func (p *RcnProxy) RcnProxyRequest(conn net.Conn, basePath string ) {
 	k := key(conn)
 	fmt.Printf("k: %v -> %v\n", k, basePath)
 	p.cache.Set(k, basePath)

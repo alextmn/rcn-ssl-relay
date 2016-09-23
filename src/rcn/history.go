@@ -24,6 +24,17 @@ func sendSs5ClosedHst(tr *StompTransport, compositeId string, startedTime time.T
 	})
 }
 
+func sendUrl(tr *StompTransport, compositeId string, url string, startedTime time.Time, endpoint net.Addr) {
+
+	sendHistory(tr, "histUrl", map[string]string{
+		"compositeId":compositeId,
+		"url":url,
+		"noMseconds":strconv.FormatInt(time.Since(startedTime).Nanoseconds() / int64(time.Millisecond), 10),
+		"startTime":strconv.FormatInt(startedTime.Unix(), 10),
+		"endpoint":endpoint.String(),
+	})
+}
+
 func sendForwardStartHst(tr *StompTransport, compositeId string, address string, endpoint net.Addr) {
 	sendHistory(tr, "histForwardStarted", map[string]string{
 		"compositeId":compositeId,
