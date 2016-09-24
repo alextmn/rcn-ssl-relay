@@ -5,79 +5,90 @@ import (
 	"net/url"
 	"net/http"
 	"net/http/httputil"
-	"fmt"
-	"../ttlcache"
 	"time"
-	"crypto/tls"
-	"encoding/hex"
+	"errors"
 	"log"
 )
 
 type rcnProxyChanData struct {
-	c net.Conn
-	e error
+	net.Conn
+	e                 error
+	done              func()
+	nbRead, nbWritten *int64
 }
+
+func (w rcnProxyChanData) Read(p []byte) (n int, err error) {
+	if n, err = w.Conn.Read(p); err != nil {
+		log.Printf("RcnProxy connection closed. %v %v\n", n, err)
+		if (w.done != nil) {
+			w.done()
+			w.done = nil
+		}
+	}
+	*w.nbRead += int64(n)
+	return n, err
+}
+func (w rcnProxyChanData) Write(p []byte) (n int, err error) {
+	n, err = w.Conn.Write(p)
+	*w.nbWritten += int64(n)
+	return
+}
+
 type RcnProxy struct {
-	ch    chan rcnProxyChanData
-	cache *ttlcache.Cache
+	ch                chan rcnProxyChanData
+	basePath          string
+	onRequestFinished func(r *http.Request, started time.Time)
 }
 
 func (p *RcnProxy) Accept() (net.Conn, error) {
 	r := <-p.ch
-	return r.c, r.e
+	return r, r.e
 }
 func (p *RcnProxy) Close() (error) {
-	log.Println("RcnProxy close: ")
+	//	fmt.Println("RcnProxy close: ")
 	return nil
 }
 func (p *RcnProxy) Addr() (net.Addr) {
-	log.Println("RcnProxy Addr: ")
+	//	fmt.Println("RcnProxy Addr: ")
 	return nil
 }
 
 func (p *RcnProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	k := hex.EncodeToString(r.TLS.TLSUnique)
-	if baseUrl, ok := p.cache.Get(k); ok {
-		//r.Header.Set("X-Forwarded-Proto", "https")
 
-		log.Printf("proxy request to %v\n", baseUrl)
-		started := time.Now()
-		url, _ := url.Parse(baseUrl)
-		px := httputil.NewSingleHostReverseProxy(url)
-		px.ServeHTTP(w, r)
-		log.Printf("proxy request done in %v\n", time.Since(started))
-	} else {
-		log.Printf("no proxy url for %v\n", k)
+	r.Header.Set("X-Forwarded-Proto", "https")
+	//r.Header.Set("X-Forwarded-By", "ikey-away.ru")
+	r.Header.Set("employeenumber", "23602677")
+
+	//log.Printf("proxy request to %v\n", r.RequestURI)
+	started := time.Now()
+	url, _ := url.Parse(p.basePath)
+	px := httputil.NewSingleHostReverseProxy(url)
+	px.ServeHTTP(w, r)
+	log.Printf("proxy request %v done in %v\n", r.RequestURI, time.Since(started))
+	p.onRequestFinished(r, started)
+}
+
+func RcnProxyRequest(conn net.Conn, stompTr *StompTransport, cId string, basePath string) (nbRead, nbWritten int64) {
+
+	log.Printf("RcnProxyRequest started to %v", basePath)
+	p := &RcnProxy{
+		ch : make(chan rcnProxyChanData, 1),
+		basePath : basePath,
+		onRequestFinished : func(r *http.Request, started time.Time) {
+			sendProxyUrl(stompTr, cId, basePath, r.RequestURI, started,  conn.RemoteAddr())
+		},
 	}
 
+	chData := rcnProxyChanData{conn, nil, func() {
+		p.ch <- rcnProxyChanData{conn, errors.New("connection closed"), nil, &nbRead, &nbWritten }
+	}, &nbRead, &nbWritten }
+	p.ch <- chData
+	http.Serve(p, p)
+	log.Printf("RcnProxyRequest done to %v bytes: %v/%v", basePath, nbRead, nbWritten)
+	return
 }
 
-func NewRcnProxy() (p *RcnProxy) {
-	p = &RcnProxy{ch : make(chan rcnProxyChanData),
-		cache : ttlcache.NewCache(5 * 60 * time.Second),
-	}
-	go func() {
-		log.Println("proxy.Server - Started!")
-		http.Serve(p, p)
-		log.Println("proxy.Server  - DONE!")
-	}()
-	return p
-}
 
-func (p *RcnProxy) RcnProxyRequest(conn net.Conn, basePath string ) {
-	k := key(conn)
-	fmt.Printf("k: %v -> %v\n", k, basePath)
-	p.cache.Set(k, basePath)
-	p.ch <- rcnProxyChanData{conn, nil}
-}
-
-func key(conn net.Conn) (string) {
-	if tlsConn, ok := conn.(*tls.Conn); ok {
-		return hex.EncodeToString(tlsConn.ConnectionState().TLSUnique)
-	} else {
-		return conn.RemoteAddr().String()
-	}
-}
 // http wrapper
 
 

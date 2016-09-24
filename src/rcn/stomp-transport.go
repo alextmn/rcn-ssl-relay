@@ -201,6 +201,7 @@ func (tr *StompTransport)  CheckX509(x509 *x509.Certificate, addr net.Addr) (cId
 	certWriter.Flush()
 	fingerprint := CalcFingerprint(x509.Raw)
 	return tr.CheckPem(string(b.Bytes()), fingerprint, addr)
+	//return tr.CheckPem("", fingerprint, addr)
 }
 func (tr *StompTransport)  CheckPem(pem string, fingerprint string, addr net.Addr) (cId string, name string, err error) {
 

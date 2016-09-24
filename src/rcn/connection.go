@@ -29,7 +29,7 @@ func (w *sslConnection) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config, cfg Config, proxy *RcnProxy) {
+func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config, cfg Config) {
 
 	var keepConnection bool
 	var cId string = ""
@@ -84,9 +84,8 @@ func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config
 		if (strings.Contains(name, "://")) {
 			sendForwardStartHst(stompTr, cId, name, remote)
 			var nb12, nb21 int64
-			err, nb12, nb21 = upForward(name, tlsConn, cfg, tlsConf, proxy)
+			err, nb12, nb21 = upForward(name, tlsConn, cfg, tlsConf, stompTr, cId)
 			sendForwardClosedHst(stompTr, cId, startedTime, name, nb12, nb21, remote)
-			keepConnection = true
 			return
 		}
 	}
@@ -110,10 +109,10 @@ func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config
 		if other, exists := stompTr.RelayRetrieve(boundPort); exists {
 			log.Printf("Start relaying , SSL:%v. (%v) %v - %v", isSSL, boundPort, other.conn.RemoteAddr(), remote)
 
-			sendRelayStartHst(stompTr, other.cId, cId, other.conn.RemoteAddr(), remote, false, isSSL)
+			sendRelayStartHst(stompTr, cId, other.cId, cId, other.conn.RemoteAddr(), remote, false, isSSL)
 			c12nb, c21, started := relay(other.conn, targetConn, 0);
 			log.Printf("bound relay finished %v/%v bytes in %s (%v)", c12nb, c21, time.Since(started), remote)
-			sendRelayCloseHst(stompTr, other.cId, cId, other.conn.RemoteAddr(),
+			sendRelayCloseHst(stompTr, cId,  other.cId, cId, other.conn.RemoteAddr(),
 				remote, other.isSsl, isSSL, c12nb, c21, started)
 
 		} else {
@@ -126,7 +125,7 @@ func HandleConnection(con net.Conn, stompTr *StompTransport, tlsConf *tls.Config
 
 }
 
-func upForward(name string, conn *tls.Conn, cfg Config, tlsConf *tls.Config, proxy *RcnProxy) (err error, c12nb, c21 int64) {
+func upForward(name string, conn *tls.Conn, cfg Config, tlsConf *tls.Config, stomp *StompTransport, cId string) (err error, c12nb, c21 int64) {
 	var up net.Conn
 	switch {
 	case strings.HasPrefix(name, "relay://"):
@@ -135,13 +134,13 @@ func upForward(name string, conn *tls.Conn, cfg Config, tlsConf *tls.Config, pro
 	case strings.HasPrefix(name, "http://"):
 		//up, err = net.Dial("tcp", name[7:len(name)])
 		log.Printf("forwarding request to :%v", name)
-		proxy.RcnProxyRequest(conn, name)
-		return  nil, 0, 0
+		c12nb, c21 = RcnProxyRequest(conn, stomp, cId, name)
+		return nil, c12nb, c21
 	case strings.HasPrefix(name, "https://"):
 		//up, err = tls.Dial("tcp", name[8:len(name)], tlsConf)
 		log.Printf("forwarding request to :%v", name)
-		proxy.RcnProxyRequest(conn, name)
-		return  nil, 0, 0
+		c12nb, c21 = RcnProxyRequest(conn, stomp, cId, name)
+		return nil, c12nb, c21
 	default:
 		log.Printf("the url %v is not implemented", name)
 		return
