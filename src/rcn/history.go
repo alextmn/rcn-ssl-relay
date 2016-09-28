@@ -24,7 +24,8 @@ func sendSs5ClosedHst(tr *StompTransport, compositeId string, startedTime time.T
 	})
 }
 
-func sendProxyUrl(tr *StompTransport, compositeId string, baseUrl string, url string, startedTime time.Time, endpoint net.Addr) {
+func sendProxyUrl(tr *StompTransport, compositeId string, baseUrl string, url string, startedTime time.Time,
+ 	endpoint net.Addr, read, written int64) {
 	sendHistory(tr, "histUrl", map[string]string{
 		"compositeId":compositeId,
 		"baseUrl":baseUrl,
@@ -32,6 +33,8 @@ func sendProxyUrl(tr *StompTransport, compositeId string, baseUrl string, url st
 		"noMseconds":strconv.FormatInt(time.Since(startedTime).Nanoseconds() / int64(time.Millisecond), 10),
 		"startTime":strconv.FormatInt(startedTime.Unix(), 10),
 		"endpoint":endpoint.String(),
+		"bytesRead":strconv.FormatInt(read,10),
+		"bytesWritten":strconv.FormatInt(written,10),
 	})
 }
 

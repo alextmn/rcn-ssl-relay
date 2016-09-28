@@ -71,17 +71,22 @@ func (p *RcnProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func RcnProxyRequest(conn net.Conn, stompTr *StompTransport, cId string, basePath string) (nbRead, nbWritten int64) {
 
 	log.Printf("RcnProxyRequest started to %v", basePath)
+	var lbRead, lbWritten int64
 	p := &RcnProxy{
 		ch : make(chan rcnProxyChanData, 1),
 		basePath : basePath,
 		onRequestFinished : func(r *http.Request, started time.Time) {
-			sendProxyUrl(stompTr, cId, basePath, r.RequestURI, started,  conn.RemoteAddr())
+			sendProxyUrl(stompTr, cId, basePath, r.RequestURI, started, conn.RemoteAddr(), nbRead, nbWritten)
+			nbRead += lbRead
+			nbWritten += lbWritten
+			lbRead = 0
+			lbWritten = 0
 		},
 	}
 
 	chData := rcnProxyChanData{conn, nil, func() {
-		p.ch <- rcnProxyChanData{conn, errors.New("connection closed"), nil, &nbRead, &nbWritten }
-	}, &nbRead, &nbWritten }
+		p.ch <- rcnProxyChanData{conn, errors.New("connection closed"), nil, &lbRead, &lbWritten }
+	}, &lbRead, &lbWritten }
 	p.ch <- chData
 	http.Serve(p, p)
 	log.Printf("RcnProxyRequest done to %v bytes: %v/%v", basePath, nbRead, nbWritten)
