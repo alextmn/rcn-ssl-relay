@@ -6,7 +6,7 @@ import (
 	"log"
 	"crypto/tls"
 	"bytes"
-	"./../ratelimit"
+	"../ratelimit"
 	"time"
 	"strings"
 	"strconv"
